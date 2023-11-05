@@ -1,7 +1,7 @@
 import datasets
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 from transformers import AutoTokenizer
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, ConcatDataset
 from transformers import AutoModelForSequenceClassification
 from torch.optim import AdamW
 from transformers import get_scheduler
@@ -35,13 +35,15 @@ def do_train(args, model, train_dataloader, save_dir="./out"):
         name="linear", optimizer=optimizer, num_warmup_steps=0, num_training_steps=num_training_steps
     )
     model.train()
-    progress_bar = tqdm(range(num_training_steps))
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    print(f"device={device}")
+
     model.to(device)
+    model.eval()
+    print("Device:__", device)
+    progress_bar = tqdm(range(num_training_steps))
     ################################
     ##### YOUR CODE BEGINGS HERE ###
     for epoch in range(num_epochs):
+        print("length_____", len(train_dataloader))
         for batch in train_dataloader:
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(**batch)
@@ -91,9 +93,7 @@ def do_eval(eval_dataloader, output_dir, out_file):
             out_file.write(str(batch["labels"][i].item()) + "\n\n")
     out_file.close()
     score = metric.compute()
-
     return score
-
 
 # Created a dataladoer for the augmented training dataset
 def create_augmented_dataloader(args, dataset):
@@ -104,8 +104,22 @@ def create_augmented_dataloader(args, dataset):
     # dataloader will be for the original training split augmented with 5k random transformed examples from the training set.
     # You may find it helpful to see how the dataloader was created at other place in this code.
 
-    raise NotImplementedError
-
+    print('enter augm')
+    transformed_dataset = dataset['train'].shuffle(seed=42).select(range(5000))
+    transformed_dataset = transformed_dataset.map(custom_transform, load_from_cache_file=False)
+    
+    orig_dataset = dataset['train'].shuffle(seed=42)
+    combined_dataset = concatenate_datasets([transformed_dataset, orig_dataset])
+    print('1')
+    print(transformed_dataset)
+    transformed_tokenized_dataset = combined_dataset.map(tokenize_function, batched=True, load_from_cache_file=False)
+    transformed_tokenized_dataset = transformed_tokenized_dataset.remove_columns(["text"])
+    transformed_tokenized_dataset = transformed_tokenized_dataset.rename_column("label", "labels")
+    print('2')
+    print(transformed_tokenized_dataset)
+    transformed_tokenized_dataset.set_format("torch")
+    train_dataloader = DataLoader(transformed_tokenized_dataset, batch_size=args.batch_size)
+    ##### YOUR CODE ENDS HERE ######
     ##### YOUR CODE ENDS HERE ######
 
     return train_dataloader
@@ -137,6 +151,7 @@ def create_transformed_dataloader(args, dataset, debug_transformation):
     eval_dataloader = DataLoader(transformed_val_dataset, batch_size=args.batch_size)
 
     return eval_dataloader
+
 
 
 if __name__ == "__main__":
